@@ -1,14 +1,16 @@
 {
   "name": "server",
   "version": "1.0.0",
-  "type": "module", 
+  "type": "module",
   "scripts": {
-    "start": "nodemon index.js"
+    "start": "nodemon --env-file=.env index.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.86.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "nodemon": "^3.1.11",
+    "postgres": "^3.4.7",
     "ws": "^8.18.3"
   }
 }
