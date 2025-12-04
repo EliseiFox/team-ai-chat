@@ -6,6 +6,7 @@
     "start": "nodemon --env-file=.env index.js"
   },
   "dependencies": {
+    "@google/genai": "^1.31.0",
     "@supabase/supabase-js": "^2.86.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",

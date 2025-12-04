@@ -2,7 +2,8 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import http from 'http';
 import cors from 'cors';
-import { addMessage, getHistory } from './db.js'; // Импортируем функции БД
+import { GoogleGenAI } from "@google/genai"; // Импорт новой библиотеки
+import { addMessage, getHistory } from './db.js';
 
 const app = express();
 app.use(cors());
@@ -10,51 +11,85 @@ app.use(cors());
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// Функция фейкового AI (оставляем пока как есть)
-const askAI = async (prompt) => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve(`[AI Database]: Я сохранил твой вопрос "${prompt}" в облако Supabase.`);
-    }, 1000);
-  });
+// === Настройка Gemini ===
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+// === Функция обращения к Gemini ===
+const askAI = async (currentPrompt) => {
+  try {
+    // 1. Получаем контекст: последние 20 сообщений из БД
+    // Нам нужно получить их, чтобы бот понимал, о чем шла речь
+    const dbHistory = await getHistory(); // Эта функция у нас возвращает старые -> новые
+    
+    // 2. Преобразуем формат Supabase в формат Gemini
+    // Gemini ждет массив: [{ role: 'user'|'model', parts: [{ text: '...' }] }]
+    const historyForGemini = dbHistory.slice(-20).map(msg => ({
+      role: msg.isAi ? 'model' : 'user',
+      parts: [{ 
+        // Добавляем имя юзера в текст, чтобы бот знал, кто есть кто в команде
+        text: msg.isAi ? msg.text : `${msg.user}: ${msg.text}` 
+      }]
+    }));
+
+    // 3. Создаем чат-сессию
+    const chat = genAI.chats.create({
+      model: "gemini-2.5-flash",
+      history: historyForGemini,
+      config: {
+        temperature: 0.7, // Креативность (0.0 - робот, 1.0 - фантазер)
+        systemInstruction: "Ты полезный AI-ассистент в командном чате. Твои ответы должны быть краткими, четкими и полезными для работы. Ты видишь сообщения в формате 'Имя: Текст'.",
+      },
+    });
+
+    // 4. Отправляем вопрос
+    const result = await chat.sendMessage({
+      message: currentPrompt
+    });
+
+    return result.text;
+
+  } catch (error) {
+    console.error("Gemini Error:", error);
+    return "Извини, произошла ошибка при связи с AI мозгом.";
+  }
 };
 
 wss.on('connection', async (ws) => {
   console.log('Client connected');
 
-  // 1. ЗАГРУЖАЕМ ИСТОРИЮ ИЗ БД
+  // Отправляем историю при входе
   const history = await getHistory();
   ws.send(JSON.stringify({ type: 'history', data: history }));
 
   ws.on('message', async (messageRaw) => {
-    const messageData = JSON.parse(messageRaw);
-    
-    // 2. СОХРАНЯЕМ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЯ В БД
-    const savedUserMsg = await addMessage(
-      messageData.user || 'Anon', 
-      messageData.text, 
-      false
-    );
-
-    if (savedUserMsg) {
-      broadcast(savedUserMsg);
-    }
-
-    // Логика AI
-    if (messageData.text.toLowerCase().startsWith('@ai')) {
-      const prompt = messageData.text.replace(/^@ai/i, '').trim();
-      const aiResponseText = await askAI(prompt);
+    try {
+      const messageData = JSON.parse(messageRaw);
       
-      // 3. СОХРАНЯЕМ СООБЩЕНИЕ БОТА В БД
-      const savedAiMsg = await addMessage(
-        'AI Bot', 
-        aiResponseText, 
-        true
+      // 1. Сохраняем сообщение юзера
+      const savedUserMsg = await addMessage(
+        messageData.user || 'Anon', 
+        messageData.text, 
+        false
       );
+      if (savedUserMsg) broadcast(savedUserMsg);
 
-      if (savedAiMsg) {
-        broadcast(savedAiMsg);
+      // 2. Логика AI
+      if (messageData.text.toLowerCase().startsWith('@ai')) {
+        const prompt = messageData.text.replace(/^@ai/i, '').trim();
+        
+        // Спрашиваем Gemini
+        const aiResponseText = await askAI(prompt);
+        
+        // Сохраняем ответ бота
+        const savedAiMsg = await addMessage(
+          'Gemini 2.5', // Имя бота
+          aiResponseText, 
+          true
+        );
+        if (savedAiMsg) broadcast(savedAiMsg);
       }
+    } catch (e) {
+      console.error('Socket Error:', e);
     }
   });
 });
