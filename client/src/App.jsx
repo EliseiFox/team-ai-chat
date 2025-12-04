@@ -14,7 +14,16 @@ function App() {
   // === 1. Подключение к серверу (при запуске) ===
   useEffect(() => {
     // Создаем подключение
-    socketRef.current = new WebSocket('ws://localhost:3000');
+    // Определяем протокол: если сайт на https, то ws должен быть wss (secure)
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    
+    // В продакшене подключаемся к тому же хосту, где открыт сайт
+    // В разработке (localhost) оставляем 3000
+    const wsUrl = import.meta.env.DEV 
+      ? 'ws://localhost:3000' 
+      : `${protocol}//${window.location.host}`;
+
+    socketRef.current = new WebSocket(wsUrl);
 
     // Когда подключились
     socketRef.current.onopen = () => {
